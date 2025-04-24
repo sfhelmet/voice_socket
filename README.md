@@ -1,72 +1,47 @@
-# Setup and Running Instructions
+# Voice Chat Web App Setup Instructions
 
-## Project Structure
-First, create the following file structure:
+## Prerequisites
+- Python 3.7 or higher
+- pip (Python package installer)
+
+## Step 1: Setup Project Structure
+Create a new directory for your project and set up the basic structure:
+
 ```
-voice-chat-app/
+voice-chat/
 ├── app.py
-├── requirements.txt
 └── templates/
     └── index.html
 ```
 
-## Installation
-1. Create a virtual environment (optional but recommended):
-   ```
-   python -m venv venv
-   ```
+## Step 2: Install Dependencies
+Open a terminal in your project directory and install the required packages:
 
-2. Activate the virtual environment:
-   - On Windows:
-     ```
-     venv\Scripts\activate
-     ```
-   - On macOS/Linux:
-     ```
-     source venv/bin/activate
-     ```
+```bash
+pip install flask flask-socketio
+```
 
-3. Install the required dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+## Step 3: Copy the Files
+1. Copy the content of the `app.py` file into your project directory.
+2. Create a `templates` directory and copy the content of `index.html` into it.
 
-## Running the Application
-1. Start the Flask application:
-   ```
-   python app.py
-   ```
+## Step 4: Run the Application
+In your terminal, run:
 
-2. The application will run on `http://127.0.0.1:5000/` by default.
+```bash
+python app.py
+```
 
-3. Open two different browser windows/tabs and navigate to the URL.
+The server will start and be accessible at `http://127.0.0.1:5000/` in your web browser.
 
-4. In both browser windows:
-   - Enter the same room ID (e.g., "room1")
-   - Click "Join Room"
-   - Once both users have joined, one user should click "Start Audio"
-   - Voice communication should now be established between the two browsers
+## Usage Instructions
+1. Open the application in your web browser.
+2. Allow microphone access when prompted.
+3. Click "Start Recording" to begin recording your voice.
+4. Click "Stop Recording" when you're done speaking.
+5. Your voice message will be sent to all other connected users automatically.
 
-## Testing on Different Devices
-If you want to test between different devices on the same network:
-
-1. Modify the `socketio.run()` line in app.py:
-   ```python
-   socketio.run(app, host='0.0.0.0', debug=True)
-   ```
-
-2. Find your computer's local IP address:
-   - On Windows: Run `ipconfig` in Command Prompt
-   - On macOS/Linux: Run `ifconfig` or `ip addr` in Terminal
-
-3. Access the application from other devices using:
-   ```
-   http://YOUR_LOCAL_IP:5000/
-   ```
-
-4. Note: For security in production, you should not use `host='0.0.0.0'` without proper security measures.
-
-## Troubleshooting
-- Ensure your browser has permission to access the microphone
-- Some browsers may require HTTPS for WebRTC to work properly
-- If testing on different networks, you may need additional TURN servers for WebRTC to work through NATs and firewalls
+## Notes
+- For a real production environment, you'd want to add proper authentication, secure the WebSocket connection, and deploy to a proper server.
+- This simple example works best when all users are on the same network or the server is publicly accessible.
+- The audio quality is set to basic defaults. For better quality, you could adjust the AudioContext settings.

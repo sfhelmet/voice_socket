@@ -1,96 +1,157 @@
-# app.py - Simplified Streamlit Voice Chat App
+# app.py - Room-Based Streamlit Chat App
 import streamlit as st
-import os
-import json
 from datetime import datetime
+import uuid
 
-# Set page configuration
+# Page setup with minimal UI
 st.set_page_config(
-    page_title="Simple Voice Chat",
-    page_icon="🎤",
+    page_title="Chat Rooms",
+    page_icon="💬",
     layout="centered"
 )
 
-# Create a header
-st.title("Simple Voice Chat")
-st.write("A lightweight voice chat application")
+# Custom CSS to make the UI cleaner
+st.markdown("""
+<style>
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+    }
+    .stMarkdown p {
+        margin-bottom: 0.5rem;
+    }
+    .main-header {
+        font-size: 2rem;
+        font-weight: bold;
+        margin-bottom: 1rem;
+    }
+    .room-header {
+        font-size: 1.5rem;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+    }
+    .stButton button {
+        width: 100%;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Initialize session state for chat messages
+# Initialize session state
+if 'room_joined' not in st.session_state:
+    st.session_state.room_joined = False
+    
+if 'room_id' not in st.session_state:
+    st.session_state.room_id = ""
+    
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = str(uuid.uuid4())[:8]  # Generate a short user ID
+    
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
-# Display chat interface
-st.markdown("## Chat Interface")
+if 'username' not in st.session_state:
+    st.session_state.username = "User-" + st.session_state.user_id
 
-# Display existing messages
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        if msg["type"] == "text":
-            st.write(msg["content"])
-        elif msg["type"] == "audio":
-            st.audio(msg["content"], format="audio/wav")
-
-# Get user input
-user_input = st.chat_input("Type a message...")
-if user_input:
-    # Add text message to chat
-    st.session_state.messages.append({
-        "role": "user",
-        "type": "text",
-        "content": user_input,
-        "timestamp": datetime.now().strftime("%H:%M:%S")
-    })
-    # Display the message (without waiting for rerun)
-    with st.chat_message("user"):
-        st.write(user_input)
-
-# Voice recording interface
-st.markdown("## Voice Messages")
-st.write("Record a voice message to send in the chat.")
-
-if st.button("Start Recording"):
-    st.warning("This is a simplified demo. In a real implementation, we would now activate the microphone.")
-    st.info("For a working voice chat implementation, we need to use a different approach.")
+# Functions for handling rooms
+def join_room():
+    room_id = room_input.strip()
+    if room_id:
+        st.session_state.room_id = room_id
+        st.session_state.room_joined = True
+        st.session_state.messages = []  # Clear messages when joining a new room
+        return True
+    return False
     
-    # Show what would happen in a real implementation
-    with st.expander("How real voice chat works"):
-        st.markdown("""
-        In a real voice chat implementation with Streamlit, we need to:
-        
-        1. Use a JavaScript component for recording audio using the Web Audio API
-        2. Send the audio data to a separate WebSocket server
-        3. Broadcast that audio to other connected clients
-        
-        The challenge is that Streamlit doesn't directly support WebSockets, which are essential for real-time communication.
-        """)
+def leave_room():
+    st.session_state.room_joined = False
+    st.session_state.room_id = ""
+    st.session_state.messages = []
 
-# Information box
-st.info("""
-For a production voice chat application, we recommend:
+def send_message(message, message_type="text"):
+    if message:
+        st.session_state.messages.append({
+            "user_id": st.session_state.user_id,
+            "username": st.session_state.username,
+            "content": message,
+            "type": message_type,
+            "timestamp": datetime.now().strftime("%H:%M:%S")
+        })
 
-1. Building a separate WebSocket server using FastAPI, Flask-SocketIO, or a dedicated WebSocket service
-2. Creating a custom frontend or using Streamlit Components to integrate with the WebSocket server
-3. Consider using cloud services like Twilio, Agora, or Amazon Chime SDK that specialize in voice communication
-""")
+# Main App UI
+st.markdown('<div class="main-header">Chat Rooms</div>', unsafe_allow_html=True)
 
-# Add sidebar with explanation
-st.sidebar.title("About this Demo")
-st.sidebar.markdown("""
-### Why the simplified version?
+# Room joining interface (shown only when not in a room)
+if not st.session_state.room_joined:
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        room_input = st.text_input("Enter Room ID:", key="room_id_input", placeholder="Enter any name for your room")
+    
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Add spacing to align with text input
+        if st.button("Join Room", use_container_width=True):
+            if join_room():
+                st.rerun()
+                
+    with st.expander("Set Username (Optional)"):
+        new_username = st.text_input("Your Display Name:", value=st.session_state.username)
+        if new_username != st.session_state.username:
+            st.session_state.username = new_username
+            st.success(f"Username set to: {new_username}")
 
-The original implementation was encountering dependency conflicts:
-
-1. **Werkzeug version conflict**: `url_quote` import error from werkzeug.urls
-2. **Thread management issues**: Streamlit's threading model conflicts with Flask-SocketIO
-3. **Server port conflicts**: Both servers trying to use the same ports
-
-### Alternative Implementation Options
-
-For a fully functional voice chat:
-
-1. **Separate Services**: Deploy the WebSocket server separately from Streamlit
-2. **Custom Components**: Create a custom Streamlit component with WebSocket abilities
-3. **Third-party Services**: Use established voice chat services with their APIs
-
-Would you like to try one of these approaches?
-""")
+# Chat interface (shown only when in a room)
+else:
+    # Room header with leave option
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.markdown(f'<div class="room-header">Room: {st.session_state.room_id}</div>', unsafe_allow_html=True)
+    with col2:
+        if st.button("Leave Room", key="leave_room", use_container_width=True):
+            leave_room()
+            st.rerun()
+    
+    # Username display
+    st.write(f"Chatting as: **{st.session_state.username}**")
+    
+    # Chat messages area
+    st.markdown("### Messages")
+    chat_container = st.container(height=400, border=True)
+    
+    with chat_container:
+        for msg in st.session_state.messages:
+            is_me = msg["user_id"] == st.session_state.user_id
+            message_style = "background-color: #EAEAEA; border-radius: 10px; padding: 10px; margin: 5px 0; text-align: left;"
+            
+            if is_me:
+                message_style = "background-color: #DCF8C6; border-radius: 10px; padding: 10px; margin: 5px 0; text-align: right;"
+            
+            # Message container    
+            st.markdown(f"""
+            <div style="{message_style}">
+                <strong>{"You" if is_me else msg["username"]}</strong> <small>{msg["timestamp"]}</small><br>
+                {msg["content"]}
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Message input area
+    user_input = st.text_input("Type a message:", key="msg_input", placeholder="Enter your message here")
+    
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        # Text message input
+        if user_input:
+            send_message(user_input)
+            # Clear input field (requires a rerun)
+            st.rerun()
+    
+    with col2:
+        # Voice message option (simplified placeholder)
+        if st.button("🎤 Voice", key="voice_btn", use_container_width=True):
+            # This would be replaced with actual voice recording functionality
+            send_message("🔊 [Voice message]", "voice")
+            st.rerun()
+    
+# Add a small footer
+st.markdown("---")
+st.markdown("<div style='text-align: center; color: gray; font-size: 0.8rem;'>Chat Rooms App</div>", unsafe_allow_html=True)

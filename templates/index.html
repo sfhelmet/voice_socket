@@ -5,117 +5,50 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice Chat</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            text-align: center;
-        }
-        .auth-container {
-            margin: 20px auto;
-            padding: 20px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            max-width: 400px;
-        }
-        .chat-container {
-            display: none;
-        }
-        .controls {
-            margin: 20px 0;
-        }
-        button {
-            padding: 10px 20px;
-            margin: 0 10px;
-            font-size: 16px;
-            cursor: pointer;
-        }
-        input {
-            padding: 8px;
-            margin: 5px;
-            width: 200px;
-        }
-        #status {
-            margin: 20px 0;
-            font-weight: bold;
-        }
-        .recording {
-            color: red;
-        }
-        .volume-meter {
-            width: 100%;
-            height: 20px;
-            background-color: #f0f0f0;
-            border-radius: 10px;
-            margin: 20px 0;
-            overflow: hidden;
-        }
-        .volume-level {
-            height: 100%;
-            background-color: #4CAF50;
-            width: 0%;
-            transition: width 0.1s;
-        }
-        .input-indicator {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 20px 0;
-        }
-        .input-dot {
-            width: 15px;
-            height: 15px;
-            border-radius: 50%;
-            background-color: #ccc;
-            margin-right: 10px;
-        }
-        .input-dot.active {
-            background-color: #4CAF50;
-            box-shadow: 0 0 10px #4CAF50;
-        }
-        .error-message {
-            color: red;
-            margin: 10px 0;
-        }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-    <div class="auth-container" id="authContainer">
-        <h2>Voice Chat Room</h2>
-        <div>
-            <button id="createRoomBtn">Create New Room</button>
-            <button id="joinRoomBtn">Join Existing Room</button>
+    <div class="container">
+        <div class="auth-container" id="authContainer">
+            <h2>Voice Chat Room</h2>
+            <div class="button-group">
+                <button id="createRoomBtn">Create New Room</button>
+                <button id="joinRoomBtn">Join Existing Room</button>
+            </div>
+            <div id="createRoomForm" style="display: none;">
+                <h3>Create Room</h3>
+                <div class="form-group">
+                    <input type="text" id="newRoomId" placeholder="Room ID">
+                    <input type="password" id="newRoomPassword" placeholder="Password">
+                </div>
+                <button id="createRoomSubmit">Create Room</button>
+            </div>
+            <div id="joinRoomForm" style="display: none;">
+                <h3>Join Room</h3>
+                <div class="form-group">
+                    <input type="text" id="roomId" placeholder="Room ID">
+                    <input type="password" id="roomPassword" placeholder="Password">
+                </div>
+                <button id="joinRoomSubmit">Join Room</button>
+            </div>
+            <div id="authError" class="error-message"></div>
         </div>
-        <div id="createRoomForm" style="display: none;">
-            <h3>Create Room</h3>
-            <input type="text" id="newRoomId" placeholder="Room ID">
-            <input type="password" id="newRoomPassword" placeholder="Password">
-            <button id="createRoomSubmit">Create</button>
-        </div>
-        <div id="joinRoomForm" style="display: none;">
-            <h3>Join Room</h3>
-            <input type="text" id="roomId" placeholder="Room ID">
-            <input type="password" id="roomPassword" placeholder="Password">
-            <button id="joinRoomSubmit">Join</button>
-        </div>
-        <div id="authError" class="error-message"></div>
-    </div>
 
-    <div class="chat-container" id="chatContainer">
-        <h1>Voice Chat</h1>
-        <div id="status">Ready to chat</div>
-        <div class="input-indicator">
-            <div class="input-dot" id="inputDot"></div>
-            <span>Input Level</span>
-        </div>
-        <div class="volume-meter">
-            <div class="volume-level" id="volumeLevel"></div>
-        </div>
-        <div class="controls">
-            <button id="recordButton">Start Chat</button>
-            <button id="stopButton" disabled>Stop Chat</button>
+        <div class="chat-container" id="chatContainer">
+            <h1>Voice Chat</h1>
+            <div id="status">Ready to chat</div>
+            <div class="input-indicator">
+                <div class="input-dot" id="inputDot"></div>
+                <span>Input Level</span>
+            </div>
+            <div class="volume-meter">
+                <div class="volume-level" id="volumeLevel"></div>
+            </div>
+            <div class="controls">
+                <button id="recordButton">Start Chat</button>
+                <button id="stopButton" disabled>Stop Chat</button>
+            </div>
         </div>
     </div>
 
@@ -228,18 +161,21 @@
                     const currentTime = performance.now();
                     const inputData = e.inputBuffer.getChannelData(0);
                     
-                    // Calculate RMS value for volume
+                    // Calculate RMS value for volume with smoothing
                     let sum = 0;
                     for (let i = 0; i < inputData.length; i++) {
                         sum += inputData[i] * inputData[i];
                     }
                     const rms = Math.sqrt(sum / inputData.length);
                     const db = 20 * Math.log10(rms);
-                    const volume = Math.min(100, Math.max(0, (db + 100) * 1.5));
+                    
+                    // Apply smoothing to the volume calculation
+                    const rawVolume = Math.min(100, Math.max(0, (db + 100) * 1.5));
+                    const smoothedVolume = Math.min(100, rawVolume * 0.7); // Reduce sensitivity by 30%
                     
                     // Update visual indicators
-                    volumeLevel.style.width = `${volume}%`;
-                    inputDot.classList.toggle('active', volume > 20);
+                    volumeLevel.style.width = `${smoothedVolume}%`;
+                    inputDot.classList.toggle('active', rawVolume > 20); // Keep the same threshold for activation
                     
                     // Convert and send audio data
                     const int16Buffer = new Int16Array(inputData.length);

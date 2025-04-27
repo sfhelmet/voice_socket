@@ -29,11 +29,49 @@
         .recording {
             color: red;
         }
+        .volume-meter {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+        .volume-level {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.1s;
+        }
+        .input-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        .input-dot {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background-color: #ccc;
+            margin-right: 10px;
+        }
+        .input-dot.active {
+            background-color: #4CAF50;
+            box-shadow: 0 0 10px #4CAF50;
+        }
     </style>
 </head>
 <body>
     <h1>Voice Chat</h1>
     <div id="status">Ready to chat</div>
+    <div class="input-indicator">
+        <div class="input-dot" id="inputDot"></div>
+        <span>Input Level</span>
+    </div>
+    <div class="volume-meter">
+        <div class="volume-level" id="volumeLevel"></div>
+    </div>
     <div class="controls">
         <button id="recordButton">Start Chat</button>
         <button id="stopButton" disabled>Stop Chat</button>
@@ -44,98 +82,139 @@
         const recordButton = document.getElementById('recordButton');
         const stopButton = document.getElementById('stopButton');
         const statusElement = document.getElementById('status');
+        const volumeLevel = document.getElementById('volumeLevel');
+        const inputDot = document.getElementById('inputDot');
 
-        let mediaRecorder;
         let audioContext;
         let sourceNode;
         let processorNode;
+        let analyserNode;
         let isRecording = false;
 
-        // Initialize audio recording
+        // Buffer for playback
+        let playbackQueue = [];
+        let isPlaying = false;
+
         async function initAudio() {
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
-                // Create audio processing nodes
                 sourceNode = audioContext.createMediaStreamSource(stream);
-                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
                 
-                // Set up audio processing
+                // Create analyser node for volume visualization
+                analyserNode = audioContext.createAnalyser();
+                analyserNode.fftSize = 256;
+                analyserNode.smoothingTimeConstant = 0.8;
+                const bufferLength = analyserNode.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+                
+                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
                 processorNode.onaudioprocess = (e) => {
                     if (!isRecording) return;
                     
+                    // Get the raw input data
                     const inputData = e.inputBuffer.getChannelData(0);
-                    const audioData = new Float32Array(inputData);
                     
-                    // Convert Float32Array to base64
-                    const audioBuffer = audioData.buffer;
-                    const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+                    // Calculate RMS value for more accurate volume measurement
+                    let sum = 0;
+                    for (let i = 0; i < inputData.length; i++) {
+                        sum += inputData[i] * inputData[i];
+                    }
+                    const rms = Math.sqrt(sum / inputData.length);
                     
-                    // Send audio data
-                    socket.emit('voice_data', { audio: base64Audio });
+                    // Convert to decibels (0-100 scale)
+                    const db = 20 * Math.log10(rms);
+                    const volume = Math.min(100, Math.max(0, (db + 100) * 1.5));
+                    
+                    console.log("Volume level:", volume);
+                    
+                    // Update visual indicators
+                    volumeLevel.style.width = `${volume}%`;
+                    inputDot.classList.toggle('active', volume > 20);
+                    
+                    // Convert Float32Array to Int16Array for smaller size
+                    const int16Buffer = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        let s = Math.max(-1, Math.min(1, inputData[i]));
+                        int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    
+                    // Send as ArrayBuffer (binary)
+                    socket.emit('voice_data', int16Buffer.buffer);
                 };
 
-                // Connect nodes
-                sourceNode.connect(processorNode);
+                // Connect the nodes in the correct order
+                sourceNode.connect(analyserNode);
+                analyserNode.connect(processorNode);
                 processorNode.connect(audioContext.destination);
 
                 recordButton.disabled = false;
                 statusElement.textContent = "Ready to chat";
             } catch (err) {
-                console.error("Error accessing microphone:", err);
+                console.error("Error in audio initialization:", err);
                 statusElement.textContent = "Error: " + err.message;
             }
         }
 
-        // Start recording
         recordButton.onclick = () => {
             if (isRecording) return;
-            
             isRecording = true;
             recordButton.disabled = true;
             stopButton.disabled = false;
             statusElement.textContent = "Chatting...";
             statusElement.classList.add("recording");
+            
+            // Resume audio context if it was suspended
+            if (audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                    console.log("AudioContext resumed");
+                });
+            }
         };
 
-        // Stop recording
         stopButton.onclick = () => {
             if (!isRecording) return;
-            
             isRecording = false;
             recordButton.disabled = false;
             stopButton.disabled = true;
             statusElement.textContent = "Ready to chat";
             statusElement.classList.remove("recording");
+            volumeLevel.style.width = "0%";
+            inputDot.classList.remove('active');
         };
 
-        // Play received audio
-        socket.on('voice_data', data => {
-            if (!isRecording) return; // Only play if we're in chat mode
-            
-            const audioData = atob(data.audio);
-            const arrayBuffer = new ArrayBuffer(audioData.length);
-            const uint8Array = new Uint8Array(arrayBuffer);
-            
-            for (let i = 0; i < audioData.length; i++) {
-                uint8Array[i] = audioData.charCodeAt(i);
+        // Play received audio (binary)
+        socket.on('voice_data', (arrayBuffer) => {
+            playbackQueue.push(arrayBuffer);
+            if (!isPlaying) playFromQueue();
+        });
+
+        function playFromQueue() {
+            if (playbackQueue.length === 0) {
+                isPlaying = false;
+                return;
             }
-            
-            const audioBuffer = audioContext.createBuffer(1, 4096, audioContext.sampleRate);
-            const channelData = audioBuffer.getChannelData(0);
-            
-            for (let i = 0; i < 4096; i++) {
-                channelData[i] = new Float32Array(arrayBuffer)[i];
+            isPlaying = true;
+            const arrayBuffer = playbackQueue.shift();
+            // Convert Int16Array back to Float32Array
+            const int16Array = new Int16Array(arrayBuffer);
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 0x8000;
             }
-            
+            // Create audio buffer and play
+            const audioBuffer = audioContext.createBuffer(1, float32Array.length, audioContext.sampleRate);
+            audioBuffer.copyToChannel(float32Array, 0);
             const source = audioContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(audioContext.destination);
+            source.onended = playFromQueue;
             source.start();
-        });
+        }
 
-        // Initialize on page load
         window.onload = initAudio;
     </script>
 </body>

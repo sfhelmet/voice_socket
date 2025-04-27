@@ -3,20 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simple Voice Chat</title>
+    <title>Voice Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
-        }
-        h1 {
             text-align: center;
         }
         .controls {
-            display: flex;
-            justify-content: center;
             margin: 20px 0;
         }
         button {
@@ -26,8 +23,7 @@
             cursor: pointer;
         }
         #status {
-            text-align: center;
-            margin: 10px 0;
+            margin: 20px 0;
             font-weight: bold;
         }
         .recording {
@@ -36,14 +32,13 @@
     </style>
 </head>
 <body>
-    <h1>Simple Voice Chat</h1>
-    <div id="status">Ready</div>
+    <h1>Voice Chat</h1>
+    <div id="status">Ready to chat</div>
     <div class="controls">
-        <button id="recordButton">Start Recording</button>
-        <button id="stopButton" disabled>Stop Recording</button>
+        <button id="recordButton">Start Chat</button>
+        <button id="stopButton" disabled>Stop Chat</button>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
     <script>
         const socket = io();
         const recordButton = document.getElementById('recordButton');
@@ -51,36 +46,40 @@
         const statusElement = document.getElementById('status');
 
         let mediaRecorder;
-        let audioChunks = [];
         let audioContext;
+        let sourceNode;
+        let processorNode;
         let isRecording = false;
 
-        // Initialize audio context
+        // Initialize audio recording
         async function initAudio() {
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
-                // Create media recorder
-                mediaRecorder = new MediaRecorder(stream);
+                // Create audio processing nodes
+                sourceNode = audioContext.createMediaStreamSource(stream);
+                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
                 
-                mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
-                    if (mediaRecorder.state === "inactive") {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                        
-                        // Convert to base64 and send to server
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            const base64data = reader.result.split(',')[1];
-                            socket.emit('voice_data', { audio: base64data });
-                        };
-                        reader.readAsDataURL(audioBlob);
-                        audioChunks = [];
-                    }
+                // Set up audio processing
+                processorNode.onaudioprocess = (e) => {
+                    if (!isRecording) return;
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const audioData = new Float32Array(inputData);
+                    
+                    // Convert Float32Array to base64
+                    const audioBuffer = audioData.buffer;
+                    const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+                    
+                    // Send audio data
+                    socket.emit('voice_data', { audio: base64Audio });
                 };
 
-                // Ready to start recording
+                // Connect nodes
+                sourceNode.connect(processorNode);
+                processorNode.connect(audioContext.destination);
+
                 recordButton.disabled = false;
                 statusElement.textContent = "Ready to chat";
             } catch (err) {
@@ -93,13 +92,10 @@
         recordButton.onclick = () => {
             if (isRecording) return;
             
-            audioChunks = [];
-            mediaRecorder.start(1000); // Collect chunks every second
             isRecording = true;
-            
             recordButton.disabled = true;
             stopButton.disabled = false;
-            statusElement.textContent = "Recording...";
+            statusElement.textContent = "Chatting...";
             statusElement.classList.add("recording");
         };
 
@@ -107,9 +103,7 @@
         stopButton.onclick = () => {
             if (!isRecording) return;
             
-            mediaRecorder.stop();
             isRecording = false;
-            
             recordButton.disabled = false;
             stopButton.disabled = true;
             statusElement.textContent = "Ready to chat";
@@ -118,8 +112,27 @@
 
         // Play received audio
         socket.on('voice_data', data => {
-            const audio = new Audio("data:audio/webm;base64," + data.audio);
-            audio.play();
+            if (!isRecording) return; // Only play if we're in chat mode
+            
+            const audioData = atob(data.audio);
+            const arrayBuffer = new ArrayBuffer(audioData.length);
+            const uint8Array = new Uint8Array(arrayBuffer);
+            
+            for (let i = 0; i < audioData.length; i++) {
+                uint8Array[i] = audioData.charCodeAt(i);
+            }
+            
+            const audioBuffer = audioContext.createBuffer(1, 4096, audioContext.sampleRate);
+            const channelData = audioBuffer.getChannelData(0);
+            
+            for (let i = 0; i < 4096; i++) {
+                channelData[i] = new Float32Array(arrayBuffer)[i];
+            }
+            
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+            source.start();
         });
 
         // Initialize on page load

@@ -90,63 +90,75 @@
         let processorNode;
         let analyserNode;
         let isRecording = false;
+        let lastProcessTime = 0;
 
         // Buffer for playback
         let playbackQueue = [];
         let isPlaying = false;
+        let latencyHistory = [];
+        const MAX_LATENCY_HISTORY = 100;
 
         async function initAudio() {
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                
                 sourceNode = audioContext.createMediaStreamSource(stream);
                 
                 // Create analyser node for volume visualization
                 analyserNode = audioContext.createAnalyser();
-                analyserNode.fftSize = 256;
-                analyserNode.smoothingTimeConstant = 0.8;
+                analyserNode.fftSize = 128; // Reduced from 256 for faster processing
+                analyserNode.smoothingTimeConstant = 0.3; // Reduced smoothing for faster response
                 const bufferLength = analyserNode.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
                 
-                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+                // Reduced buffer size for lower latency
+                processorNode = audioContext.createScriptProcessor(1024, 1, 1);
 
                 processorNode.onaudioprocess = (e) => {
                     if (!isRecording) return;
                     
-                    // Get the raw input data
+                    const currentTime = performance.now();
                     const inputData = e.inputBuffer.getChannelData(0);
                     
-                    // Calculate RMS value for more accurate volume measurement
+                    // Calculate RMS value for volume
                     let sum = 0;
                     for (let i = 0; i < inputData.length; i++) {
                         sum += inputData[i] * inputData[i];
                     }
                     const rms = Math.sqrt(sum / inputData.length);
-                    
-                    // Convert to decibels (0-100 scale)
                     const db = 20 * Math.log10(rms);
                     const volume = Math.min(100, Math.max(0, (db + 100) * 1.5));
-                    
-                    console.log("Volume level:", volume);
                     
                     // Update visual indicators
                     volumeLevel.style.width = `${volume}%`;
                     inputDot.classList.toggle('active', volume > 20);
                     
-                    // Convert Float32Array to Int16Array for smaller size
+                    // Convert and send audio data
                     const int16Buffer = new Int16Array(inputData.length);
                     for (let i = 0; i < inputData.length; i++) {
-                        let s = Math.max(-1, Math.min(1, inputData[i]));
-                        int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                        int16Buffer[i] = inputData[i] * 0x7FFF;
                     }
                     
-                    // Send as ArrayBuffer (binary)
-                    socket.emit('voice_data', int16Buffer.buffer);
+                    // Add timestamp to track latency
+                    const audioData = {
+                        timestamp: currentTime,
+                        data: int16Buffer.buffer
+                    };
+                    
+                    socket.emit('voice_data', audioData);
+                    
+                    // Calculate processing time
+                    const processTime = performance.now() - currentTime;
+                    lastProcessTime = processTime;
+                    
+                    // Update latency history
+                    latencyHistory.push(processTime);
+                    if (latencyHistory.length > MAX_LATENCY_HISTORY) {
+                        latencyHistory.shift();
+                    }
                 };
 
-                // Connect the nodes in the correct order
+                // Optimized audio node connections
                 sourceNode.connect(analyserNode);
                 analyserNode.connect(processorNode);
                 processorNode.connect(audioContext.destination);
@@ -186,9 +198,17 @@
             inputDot.classList.remove('active');
         };
 
-        // Play received audio (binary)
-        socket.on('voice_data', (arrayBuffer) => {
-            playbackQueue.push(arrayBuffer);
+        // Play received audio with latency compensation
+        socket.on('voice_data', (audioData) => {
+            const receiveTime = performance.now();
+            const latency = receiveTime - audioData.timestamp;
+            
+            // Add to playback queue with timestamp
+            playbackQueue.push({
+                data: audioData.data,
+                timestamp: audioData.timestamp
+            });
+            
             if (!isPlaying) playFromQueue();
         });
 
@@ -197,17 +217,29 @@
                 isPlaying = false;
                 return;
             }
+            
             isPlaying = true;
-            const arrayBuffer = playbackQueue.shift();
-            // Convert Int16Array back to Float32Array
+            const audioItem = playbackQueue.shift();
+            const currentTime = performance.now();
+            const latency = currentTime - audioItem.timestamp;
+            
+            // Skip if too much latency
+            if (latency > 500) { // Skip if more than 500ms late
+                playFromQueue();
+                return;
+            }
+            
+            const arrayBuffer = audioItem.data;
             const int16Array = new Int16Array(arrayBuffer);
             const float32Array = new Float32Array(int16Array.length);
+            
             for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] / 0x8000;
+                float32Array[i] = int16Array[i] / 0x7FFF;
             }
-            // Create audio buffer and play
+            
             const audioBuffer = audioContext.createBuffer(1, float32Array.length, audioContext.sampleRate);
             audioBuffer.copyToChannel(float32Array, 0);
+            
             const source = audioContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(audioContext.destination);

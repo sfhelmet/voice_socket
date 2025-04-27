@@ -138,22 +138,26 @@
 
         async function initAudio() {
             try {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 96000, // Increased to 96kHz
+                    latencyHint: 'interactive'
+                });
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true,
-                        sampleRate: 48000,
-                        channelCount: 1
+                        sampleRate: 96000, // Increased to 96kHz
+                        channelCount: 1,
+                        latency: 0
                     }
                 });
                 sourceNode = audioContext.createMediaStreamSource(stream);
                 
                 // Create analyser node for volume visualization
                 analyserNode = audioContext.createAnalyser();
-                analyserNode.fftSize = 2048; // Increased for better frequency resolution
-                analyserNode.smoothingTimeConstant = 0.8; // Smoother volume visualization
+                analyserNode.fftSize = 4096; // Increased for better frequency resolution
+                analyserNode.smoothingTimeConstant = 0.9; // Smoother volume visualization
                 const bufferLength = analyserNode.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
                 
@@ -161,16 +165,28 @@
                 const gainNode = audioContext.createGain();
                 gainNode.gain.value = 1.0;
                 
-                // Create compressor for better audio quality
+                // Create high-quality compressor
                 const compressor = audioContext.createDynamicsCompressor();
-                compressor.threshold.value = -24;
-                compressor.knee.value = 30;
-                compressor.ratio.value = 12;
-                compressor.attack.value = 0.003;
-                compressor.release.value = 0.25;
+                compressor.threshold.value = -20;
+                compressor.knee.value = 20;
+                compressor.ratio.value = 8;
+                compressor.attack.value = 0.001;
+                compressor.release.value = 0.1;
+
+                // Create high-pass filter to remove low-frequency noise
+                const highPassFilter = audioContext.createBiquadFilter();
+                highPassFilter.type = 'highpass';
+                highPassFilter.frequency.value = 80;
+                highPassFilter.Q.value = 0.5;
+
+                // Create low-pass filter to remove high-frequency noise
+                const lowPassFilter = audioContext.createBiquadFilter();
+                lowPassFilter.type = 'lowpass';
+                lowPassFilter.frequency.value = 18000;
+                lowPassFilter.Q.value = 0.5;
 
                 // Create script processor with larger buffer size
-                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+                processorNode = audioContext.createScriptProcessor(8192, 1, 1); // Increased buffer size
 
                 // Start buffer refresh timer
                 bufferRefreshTimer = setInterval(refreshBuffer, BUFFER_REFRESH_INTERVAL);
@@ -189,20 +205,23 @@
                     const rms = Math.sqrt(sum / inputData.length);
                     const db = 20 * Math.log10(rms);
                     
-                    // Improved volume calculation with better smoothing
-                    const rawVolume = Math.min(100, Math.max(0, (db + 100) * 1.5));
-                    const smoothedVolume = Math.min(100, rawVolume * 0.7);
+                    // Improved volume calculation with maximum sensitivity
+                    const rawVolume = Math.min(100, Math.max(0, (db + 40) * 4.0)); // More aggressive scaling
+                    const smoothedVolume = Math.min(100, rawVolume * 0.9); // Less smoothing
                     
                     // Update visual indicators
                     volumeLevel.style.width = `${smoothedVolume}%`;
-                    inputDot.classList.toggle('active', rawVolume > 20);
+                    inputDot.classList.toggle('active', rawVolume > 5); // Much lower threshold
                     
                     // Convert to 16-bit PCM with improved quality
                     const int16Buffer = new Int16Array(inputData.length);
                     for (let i = 0; i < inputData.length; i++) {
-                        // Apply gentle compression to improve quality
-                        const compressedSample = Math.tanh(inputData[i] * 1.5) / 1.5;
-                        int16Buffer[i] = Math.max(-32768, Math.min(32767, Math.round(compressedSample * 32767)));
+                        // Apply high-quality compression
+                        const compressedSample = Math.tanh(inputData[i] * 2.0) / 2.0;
+                        // Apply dithering for better quality at low volumes
+                        const dither = (Math.random() - 0.5) / 32768;
+                        int16Buffer[i] = Math.max(-32768, Math.min(32767, 
+                            Math.round((compressedSample + dither) * 32767)));
                     }
                     
                     const audioData = {
@@ -223,7 +242,9 @@
 
                 // Connect nodes in the correct order
                 sourceNode.connect(analyserNode);
-                analyserNode.connect(compressor);
+                analyserNode.connect(highPassFilter);
+                highPassFilter.connect(lowPassFilter);
+                lowPassFilter.connect(compressor);
                 compressor.connect(gainNode);
                 gainNode.connect(processorNode);
                 processorNode.connect(audioContext.destination);
@@ -302,7 +323,7 @@
             for (let i = 0; i < int16Array.length; i++) {
                 // Apply inverse compression for better quality
                 const normalizedSample = int16Array[i] / 32767;
-                float32Array[i] = Math.atanh(normalizedSample * 1.5) / 1.5;
+                float32Array[i] = Math.atanh(normalizedSample * 2.0) / 2.0;
             }
             
             const audioBuffer = audioContext.createBuffer(1, float32Array.length, audioContext.sampleRate);
@@ -315,7 +336,20 @@
             const gainNode = audioContext.createGain();
             gainNode.gain.value = 1.0;
             
-            source.connect(gainNode);
+            // Add playback filters
+            const highPassFilter = audioContext.createBiquadFilter();
+            highPassFilter.type = 'highpass';
+            highPassFilter.frequency.value = 80;
+            highPassFilter.Q.value = 0.5;
+
+            const lowPassFilter = audioContext.createBiquadFilter();
+            lowPassFilter.type = 'lowpass';
+            lowPassFilter.frequency.value = 18000;
+            lowPassFilter.Q.value = 0.5;
+            
+            source.connect(highPassFilter);
+            highPassFilter.connect(lowPassFilter);
+            lowPassFilter.connect(gainNode);
             gainNode.connect(audioContext.destination);
             source.onended = playFromQueue;
             source.start();

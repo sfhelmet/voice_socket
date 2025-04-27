@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, session
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import os
 from functools import wraps
+from collections import defaultdict
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key')
@@ -9,6 +10,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 # Store active rooms and their passwords
 active_rooms = {}
+# Track participants in each room
+room_participants = defaultdict(set)
 
 def authenticated_only(f):
     @wraps(f)
@@ -42,7 +45,27 @@ def handle_connect():
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print('Client disconnected')
+    room_id = session.get('room_id')
+    if room_id and session.get('authenticated'):
+        leave_room(room_id)
+        room_participants[room_id].discard(request.sid)
+        emit('participant_update', {'count': len(room_participants[room_id])}, room=room_id)
+        if not room_participants[room_id]:
+            del active_rooms[room_id]
+            del room_participants[room_id]
+
+@socketio.on('leave_room')
+def handle_leave_room():
+    room_id = session.get('room_id')
+    if room_id and session.get('authenticated'):
+        leave_room(room_id)
+        room_participants[room_id].discard(request.sid)
+        session['authenticated'] = False
+        session['room_id'] = None
+        emit('participant_update', {'count': len(room_participants[room_id])}, room=room_id)
+        if not room_participants[room_id]:
+            del active_rooms[room_id]
+            del room_participants[room_id]
 
 @socketio.on('authenticate')
 def handle_authentication(data):
@@ -64,7 +87,12 @@ def handle_authentication(data):
     session['authenticated'] = True
     session['room_id'] = room_id
     join_room(room_id)
-    emit('authentication_success', {'message': 'Successfully joined room'})
+    room_participants[room_id].add(request.sid)
+    emit('authentication_success', {
+        'message': 'Successfully joined room',
+        'participant_count': len(room_participants[room_id])
+    })
+    emit('participant_update', {'count': len(room_participants[room_id])}, room=room_id)
 
 @socketio.on('voice_data')
 @authenticated_only

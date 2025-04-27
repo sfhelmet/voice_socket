@@ -198,6 +198,32 @@ input:focus {
     margin: 24px 0;
 }
 
+.room-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding: 12px;
+    background-color: var(--background-color);
+    border-radius: 8px;
+}
+
+#participantCount {
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.secondary-button {
+    background-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+.secondary-button:hover {
+    background-color: #D1D5DB;
+    transform: translateY(-1px);
+}
+
 @media (max-width: 640px) {
     .container {
         padding: 16px;

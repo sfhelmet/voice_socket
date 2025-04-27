@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Chat</title>
+    <title>Cloud Walky - Secure Voice Chat</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
@@ -11,7 +11,7 @@
 <body>
     <div class="container">
         <div class="auth-container" id="authContainer">
-            <h2>Voice Chat Room</h2>
+            <h2>Cloud Walky</h2>
             <div class="button-group">
                 <button id="createRoomBtn">Create New Room</button>
                 <button id="joinRoomBtn">Join Existing Room</button>
@@ -36,7 +36,11 @@
         </div>
 
         <div class="chat-container" id="chatContainer">
-            <h1>Voice Chat</h1>
+            <h1>Cloud Walky</h1>
+            <div class="room-info">
+                <div id="participantCount">1 person in room</div>
+                <button id="leaveRoomBtn" class="secondary-button">Leave Room</button>
+            </div>
             <div id="status">Ready to chat</div>
             <div class="input-indicator">
                 <div class="input-dot" id="inputDot"></div>
@@ -68,6 +72,8 @@
         const statusElement = document.getElementById('status');
         const volumeLevel = document.getElementById('volumeLevel');
         const inputDot = document.getElementById('inputDot');
+        const leaveRoomBtn = document.getElementById('leaveRoomBtn');
+        const participantCount = document.getElementById('participantCount');
 
         let audioContext;
         let sourceNode;
@@ -128,16 +134,38 @@
             socket.emit('authenticate', { room_id: roomId, password: password });
         }
 
-        socket.on('authentication_success', () => {
+        socket.on('authentication_success', (data) => {
             authenticated = true;
             authContainer.style.display = 'none';
             chatContainer.style.display = 'block';
+            updateParticipantCount(data.participant_count);
             initAudio();
         });
 
         socket.on('authentication_failed', (data) => {
             authError.textContent = data.message;
         });
+
+        socket.on('participant_update', (data) => {
+            updateParticipantCount(data.count);
+        });
+
+        function updateParticipantCount(count) {
+            participantCount.textContent = `${count} ${count === 1 ? 'person' : 'people'} in room`;
+        }
+
+        leaveRoomBtn.onclick = () => {
+            if (confirm('Are you sure you want to leave the room?')) {
+                socket.emit('leave_room');
+                authenticated = false;
+                chatContainer.style.display = 'none';
+                authContainer.style.display = 'block';
+                // Reset forms
+                createRoomForm.style.display = 'none';
+                joinRoomForm.style.display = 'none';
+                authError.textContent = '';
+            }
+        };
 
         async function initAudio() {
             try {

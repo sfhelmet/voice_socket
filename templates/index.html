@@ -13,6 +13,16 @@
             padding: 20px;
             text-align: center;
         }
+        .auth-container {
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-width: 400px;
+        }
+        .chat-container {
+            display: none;
+        }
         .controls {
             margin: 20px 0;
         }
@@ -21,6 +31,11 @@
             margin: 0 10px;
             font-size: 16px;
             cursor: pointer;
+        }
+        input {
+            padding: 8px;
+            margin: 5px;
+            width: 200px;
         }
         #status {
             margin: 20px 0;
@@ -60,25 +75,61 @@
             background-color: #4CAF50;
             box-shadow: 0 0 10px #4CAF50;
         }
+        .error-message {
+            color: red;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
-    <h1>Voice Chat</h1>
-    <div id="status">Ready to chat</div>
-    <div class="input-indicator">
-        <div class="input-dot" id="inputDot"></div>
-        <span>Input Level</span>
+    <div class="auth-container" id="authContainer">
+        <h2>Voice Chat Room</h2>
+        <div>
+            <button id="createRoomBtn">Create New Room</button>
+            <button id="joinRoomBtn">Join Existing Room</button>
+        </div>
+        <div id="createRoomForm" style="display: none;">
+            <h3>Create Room</h3>
+            <input type="text" id="newRoomId" placeholder="Room ID">
+            <input type="password" id="newRoomPassword" placeholder="Password">
+            <button id="createRoomSubmit">Create</button>
+        </div>
+        <div id="joinRoomForm" style="display: none;">
+            <h3>Join Room</h3>
+            <input type="text" id="roomId" placeholder="Room ID">
+            <input type="password" id="roomPassword" placeholder="Password">
+            <button id="joinRoomSubmit">Join</button>
+        </div>
+        <div id="authError" class="error-message"></div>
     </div>
-    <div class="volume-meter">
-        <div class="volume-level" id="volumeLevel"></div>
-    </div>
-    <div class="controls">
-        <button id="recordButton">Start Chat</button>
-        <button id="stopButton" disabled>Stop Chat</button>
+
+    <div class="chat-container" id="chatContainer">
+        <h1>Voice Chat</h1>
+        <div id="status">Ready to chat</div>
+        <div class="input-indicator">
+            <div class="input-dot" id="inputDot"></div>
+            <span>Input Level</span>
+        </div>
+        <div class="volume-meter">
+            <div class="volume-level" id="volumeLevel"></div>
+        </div>
+        <div class="controls">
+            <button id="recordButton">Start Chat</button>
+            <button id="stopButton" disabled>Stop Chat</button>
+        </div>
     </div>
 
     <script>
         const socket = io();
+        const authContainer = document.getElementById('authContainer');
+        const chatContainer = document.getElementById('chatContainer');
+        const createRoomForm = document.getElementById('createRoomForm');
+        const joinRoomForm = document.getElementById('joinRoomForm');
+        const authError = document.getElementById('authError');
+        const createRoomBtn = document.getElementById('createRoomBtn');
+        const joinRoomBtn = document.getElementById('joinRoomBtn');
+        const createRoomSubmit = document.getElementById('createRoomSubmit');
+        const joinRoomSubmit = document.getElementById('joinRoomSubmit');
         const recordButton = document.getElementById('recordButton');
         const stopButton = document.getElementById('stopButton');
         const statusElement = document.getElementById('status');
@@ -91,12 +142,69 @@
         let analyserNode;
         let isRecording = false;
         let lastProcessTime = 0;
+        let authenticated = false;
 
         // Buffer for playback
         let playbackQueue = [];
         let isPlaying = false;
         let latencyHistory = [];
         const MAX_LATENCY_HISTORY = 100;
+
+        // Authentication handlers
+        createRoomBtn.onclick = () => {
+            createRoomForm.style.display = 'block';
+            joinRoomForm.style.display = 'none';
+        };
+
+        joinRoomBtn.onclick = () => {
+            joinRoomForm.style.display = 'block';
+            createRoomForm.style.display = 'none';
+        };
+
+        createRoomSubmit.onclick = async () => {
+            const roomId = document.getElementById('newRoomId').value;
+            const password = document.getElementById('newRoomPassword').value;
+            
+            try {
+                const response = await fetch('/create_room', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `room_id=${encodeURIComponent(roomId)}&password=${encodeURIComponent(password)}`
+                });
+                
+                const data = await response.json();
+                if (data.error) {
+                    authError.textContent = data.error;
+                } else {
+                    authenticate(roomId, password);
+                }
+            } catch (err) {
+                authError.textContent = 'Error creating room';
+            }
+        };
+
+        joinRoomSubmit.onclick = () => {
+            const roomId = document.getElementById('roomId').value;
+            const password = document.getElementById('roomPassword').value;
+            authenticate(roomId, password);
+        };
+
+        function authenticate(roomId, password) {
+            socket.emit('authenticate', { room_id: roomId, password: password });
+        }
+
+        socket.on('authentication_success', () => {
+            authenticated = true;
+            authContainer.style.display = 'none';
+            chatContainer.style.display = 'block';
+            initAudio();
+        });
+
+        socket.on('authentication_failed', (data) => {
+            authError.textContent = data.message;
+        });
 
         async function initAudio() {
             try {

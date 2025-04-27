@@ -81,26 +81,35 @@ h3 {
 }
 
 button {
-    background-color: var(--primary-color);
-    color: white;
-    border: none;
-    padding: 12px 24px;
-    border-radius: 8px;
+    padding: 10px 20px;
     font-size: 16px;
-    font-weight: 500;
+    border: none;
+    border-radius: 5px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.3s ease;
+    background-color: #4CAF50;
+    color: white;
 }
 
 button:hover {
-    background-color: var(--primary-hover);
-    transform: translateY(-1px);
+    background-color: #45a049;
 }
 
 button:disabled {
-    background-color: var(--border-color);
+    background-color: #cccccc;
     cursor: not-allowed;
-    transform: none;
+}
+
+#muteButton {
+    background-color: #4CAF50;
+}
+
+#muteButton:hover {
+    background-color: #45a049;
+}
+
+#muteButton:disabled {
+    background-color: #cccccc;
 }
 
 input {
@@ -193,9 +202,9 @@ input:focus {
 
 .controls {
     display: flex;
-    gap: 16px;
     justify-content: center;
-    margin: 24px 0;
+    gap: 10px;
+    margin-top: 20px;
 }
 
 .room-info {

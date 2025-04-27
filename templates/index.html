@@ -12,25 +12,9 @@
     <div class="container">
         <div class="auth-container" id="authContainer">
             <h2>Cloud Walky</h2>
-            <div class="button-group">
-                <button id="createRoomBtn">Create New Room</button>
-                <button id="joinRoomBtn">Join Existing Room</button>
-            </div>
-            <div id="createRoomForm" style="display: none;">
-                <h3>Create Room</h3>
-                <div class="form-group">
-                    <input type="text" id="newRoomId" placeholder="Room ID">
-                    <input type="password" id="newRoomPassword" placeholder="Password">
-                </div>
-                <button id="createRoomSubmit">Create Room</button>
-            </div>
-            <div id="joinRoomForm" style="display: none;">
-                <h3>Join Room</h3>
-                <div class="form-group">
-                    <input type="text" id="roomId" placeholder="Room ID">
-                    <input type="password" id="roomPassword" placeholder="Password">
-                </div>
-                <button id="joinRoomSubmit">Join Room</button>
+            <div class="form-group">
+                <input type="password" id="password" placeholder="Enter Password">
+                <button id="joinBtn">Join Chat</button>
             </div>
             <div id="authError" class="error-message"></div>
         </div>
@@ -38,8 +22,8 @@
         <div class="chat-container" id="chatContainer">
             <h1>Cloud Walky</h1>
             <div class="room-info">
-                <div id="participantCount">1 person in room</div>
-                <button id="leaveRoomBtn" class="secondary-button">Leave Room</button>
+                <div id="participantCount">1 person in chat</div>
+                <button id="leaveRoomBtn" class="secondary-button">Leave Chat</button>
             </div>
             <div id="status">Ready to chat</div>
             <div class="input-indicator">
@@ -50,8 +34,7 @@
                 <div class="volume-level" id="volumeLevel"></div>
             </div>
             <div class="controls">
-                <button id="recordButton">Start Chat</button>
-                <button id="stopButton" disabled>Stop Chat</button>
+                <button id="muteButton">Mute</button>
             </div>
         </div>
     </div>
@@ -60,26 +43,20 @@
         const socket = io();
         const authContainer = document.getElementById('authContainer');
         const chatContainer = document.getElementById('chatContainer');
-        const createRoomForm = document.getElementById('createRoomForm');
-        const joinRoomForm = document.getElementById('joinRoomForm');
         const authError = document.getElementById('authError');
-        const createRoomBtn = document.getElementById('createRoomBtn');
-        const joinRoomBtn = document.getElementById('joinRoomBtn');
-        const createRoomSubmit = document.getElementById('createRoomSubmit');
-        const joinRoomSubmit = document.getElementById('joinRoomSubmit');
-        const recordButton = document.getElementById('recordButton');
-        const stopButton = document.getElementById('stopButton');
+        const joinBtn = document.getElementById('joinBtn');
+        const leaveRoomBtn = document.getElementById('leaveRoomBtn');
+        const muteButton = document.getElementById('muteButton');
         const statusElement = document.getElementById('status');
         const volumeLevel = document.getElementById('volumeLevel');
         const inputDot = document.getElementById('inputDot');
-        const leaveRoomBtn = document.getElementById('leaveRoomBtn');
         const participantCount = document.getElementById('participantCount');
 
         let audioContext;
         let sourceNode;
         let processorNode;
         let analyserNode;
-        let isRecording = false;
+        let isMuted = false;
         let lastProcessTime = 0;
         let authenticated = false;
 
@@ -88,50 +65,19 @@
         let isPlaying = false;
         let latencyHistory = [];
         const MAX_LATENCY_HISTORY = 100;
+        const BUFFER_REFRESH_INTERVAL = 5000; // 5 seconds
 
-        // Authentication handlers
-        createRoomBtn.onclick = () => {
-            createRoomForm.style.display = 'block';
-            joinRoomForm.style.display = 'none';
+        // Add buffer refresh timer
+        let bufferRefreshTimer;
+
+        // Authentication handler
+        joinBtn.onclick = () => {
+            const password = document.getElementById('password').value;
+            authenticate(password);
         };
 
-        joinRoomBtn.onclick = () => {
-            joinRoomForm.style.display = 'block';
-            createRoomForm.style.display = 'none';
-        };
-
-        createRoomSubmit.onclick = async () => {
-            const roomId = document.getElementById('newRoomId').value;
-            const password = document.getElementById('newRoomPassword').value;
-            
-            try {
-                const response = await fetch('/create_room', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: `room_id=${encodeURIComponent(roomId)}&password=${encodeURIComponent(password)}`
-                });
-                
-                const data = await response.json();
-                if (data.error) {
-                    authError.textContent = data.error;
-                } else {
-                    authenticate(roomId, password);
-                }
-            } catch (err) {
-                authError.textContent = 'Error creating room';
-            }
-        };
-
-        joinRoomSubmit.onclick = () => {
-            const roomId = document.getElementById('roomId').value;
-            const password = document.getElementById('roomPassword').value;
-            authenticate(roomId, password);
-        };
-
-        function authenticate(roomId, password) {
-            socket.emit('authenticate', { room_id: roomId, password: password });
+        function authenticate(password) {
+            socket.emit('authenticate', { password: password });
         }
 
         socket.on('authentication_success', (data) => {
@@ -151,45 +97,91 @@
         });
 
         function updateParticipantCount(count) {
-            participantCount.textContent = `${count} ${count === 1 ? 'person' : 'people'} in room`;
+            participantCount.textContent = `${count} ${count === 1 ? 'person' : 'people'} in chat`;
+        }
+
+        function cleanupAudio() {
+            if (bufferRefreshTimer) {
+                clearInterval(bufferRefreshTimer);
+                bufferRefreshTimer = null;
+            }
+            if (processorNode) {
+                processorNode.disconnect();
+                processorNode = null;
+            }
+            if (analyserNode) {
+                analyserNode.disconnect();
+                analyserNode = null;
+            }
+            if (sourceNode) {
+                sourceNode.disconnect();
+                sourceNode = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            playbackQueue = [];
+            isPlaying = false;
         }
 
         leaveRoomBtn.onclick = () => {
-            if (confirm('Are you sure you want to leave the room?')) {
+            if (confirm('Are you sure you want to leave the chat?')) {
                 socket.emit('leave_room');
                 authenticated = false;
                 chatContainer.style.display = 'none';
                 authContainer.style.display = 'block';
-                // Reset forms
-                createRoomForm.style.display = 'none';
-                joinRoomForm.style.display = 'none';
                 authError.textContent = '';
+                cleanupAudio();
             }
         };
 
         async function initAudio() {
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 48000,
+                        channelCount: 1
+                    }
+                });
                 sourceNode = audioContext.createMediaStreamSource(stream);
                 
                 // Create analyser node for volume visualization
                 analyserNode = audioContext.createAnalyser();
-                analyserNode.fftSize = 128; // Reduced from 256 for faster processing
-                analyserNode.smoothingTimeConstant = 0.3; // Reduced smoothing for faster response
+                analyserNode.fftSize = 2048; // Increased for better frequency resolution
+                analyserNode.smoothingTimeConstant = 0.8; // Smoother volume visualization
                 const bufferLength = analyserNode.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
                 
-                // Reduced buffer size for lower latency
-                processorNode = audioContext.createScriptProcessor(1024, 1, 1);
+                // Create gain node for better volume control
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 1.0;
+                
+                // Create compressor for better audio quality
+                const compressor = audioContext.createDynamicsCompressor();
+                compressor.threshold.value = -24;
+                compressor.knee.value = 30;
+                compressor.ratio.value = 12;
+                compressor.attack.value = 0.003;
+                compressor.release.value = 0.25;
+
+                // Create script processor with larger buffer size
+                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+                // Start buffer refresh timer
+                bufferRefreshTimer = setInterval(refreshBuffer, BUFFER_REFRESH_INTERVAL);
 
                 processorNode.onaudioprocess = (e) => {
-                    if (!isRecording) return;
+                    if (!authenticated || isMuted) return;
                     
                     const currentTime = performance.now();
                     const inputData = e.inputBuffer.getChannelData(0);
                     
-                    // Calculate RMS value for volume with smoothing
+                    // Calculate RMS value for volume with improved smoothing
                     let sum = 0;
                     for (let i = 0; i < inputData.length; i++) {
                         sum += inputData[i] * inputData[i];
@@ -197,21 +189,22 @@
                     const rms = Math.sqrt(sum / inputData.length);
                     const db = 20 * Math.log10(rms);
                     
-                    // Apply smoothing to the volume calculation
+                    // Improved volume calculation with better smoothing
                     const rawVolume = Math.min(100, Math.max(0, (db + 100) * 1.5));
-                    const smoothedVolume = Math.min(100, rawVolume * 0.7); // Reduce sensitivity by 30%
+                    const smoothedVolume = Math.min(100, rawVolume * 0.7);
                     
                     // Update visual indicators
                     volumeLevel.style.width = `${smoothedVolume}%`;
-                    inputDot.classList.toggle('active', rawVolume > 20); // Keep the same threshold for activation
+                    inputDot.classList.toggle('active', rawVolume > 20);
                     
-                    // Convert and send audio data
+                    // Convert to 16-bit PCM with improved quality
                     const int16Buffer = new Int16Array(inputData.length);
                     for (let i = 0; i < inputData.length; i++) {
-                        int16Buffer[i] = inputData[i] * 0x7FFF;
+                        // Apply gentle compression to improve quality
+                        const compressedSample = Math.tanh(inputData[i] * 1.5) / 1.5;
+                        int16Buffer[i] = Math.max(-32768, Math.min(32767, Math.round(compressedSample * 32767)));
                     }
                     
-                    // Add timestamp to track latency
                     const audioData = {
                         timestamp: currentTime,
                         data: int16Buffer.buffer
@@ -219,23 +212,23 @@
                     
                     socket.emit('voice_data', audioData);
                     
-                    // Calculate processing time
                     const processTime = performance.now() - currentTime;
                     lastProcessTime = processTime;
                     
-                    // Update latency history
                     latencyHistory.push(processTime);
                     if (latencyHistory.length > MAX_LATENCY_HISTORY) {
                         latencyHistory.shift();
                     }
                 };
 
-                // Optimized audio node connections
+                // Connect nodes in the correct order
                 sourceNode.connect(analyserNode);
-                analyserNode.connect(processorNode);
+                analyserNode.connect(compressor);
+                compressor.connect(gainNode);
+                gainNode.connect(processorNode);
                 processorNode.connect(audioContext.destination);
 
-                recordButton.disabled = false;
+                muteButton.disabled = false;
                 statusElement.textContent = "Ready to chat";
             } catch (err) {
                 console.error("Error in audio initialization:", err);
@@ -243,13 +236,16 @@
             }
         }
 
-        recordButton.onclick = () => {
-            if (isRecording) return;
-            isRecording = true;
-            recordButton.disabled = true;
-            stopButton.disabled = false;
-            statusElement.textContent = "Chatting...";
-            statusElement.classList.add("recording");
+        muteButton.onclick = () => {
+            isMuted = !isMuted;
+            muteButton.textContent = isMuted ? "Unmute" : "Mute";
+            statusElement.textContent = isMuted ? "Muted" : "Chatting...";
+            statusElement.classList.toggle("recording", !isMuted);
+            
+            if (isMuted) {
+                volumeLevel.style.width = "0%";
+                inputDot.classList.remove('active');
+            }
             
             // Resume audio context if it was suspended
             if (audioContext.state === 'suspended') {
@@ -257,17 +253,6 @@
                     console.log("AudioContext resumed");
                 });
             }
-        };
-
-        stopButton.onclick = () => {
-            if (!isRecording) return;
-            isRecording = false;
-            recordButton.disabled = false;
-            stopButton.disabled = true;
-            statusElement.textContent = "Ready to chat";
-            statusElement.classList.remove("recording");
-            volumeLevel.style.width = "0%";
-            inputDot.classList.remove('active');
         };
 
         // Play received audio with latency compensation
@@ -283,6 +268,14 @@
             
             if (!isPlaying) playFromQueue();
         });
+
+        function refreshBuffer() {
+            if (playbackQueue.length > 0) {
+                console.log(`Clearing ${playbackQueue.length} items from playback queue`);
+                playbackQueue = [];
+                isPlaying = false;
+            }
+        }
 
         function playFromQueue() {
             if (playbackQueue.length === 0) {
@@ -305,8 +298,11 @@
             const int16Array = new Int16Array(arrayBuffer);
             const float32Array = new Float32Array(int16Array.length);
             
+            // Improved conversion with better quality
             for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] / 0x7FFF;
+                // Apply inverse compression for better quality
+                const normalizedSample = int16Array[i] / 32767;
+                float32Array[i] = Math.atanh(normalizedSample * 1.5) / 1.5;
             }
             
             const audioBuffer = audioContext.createBuffer(1, float32Array.length, audioContext.sampleRate);
@@ -314,12 +310,21 @@
             
             const source = audioContext.createBufferSource();
             source.buffer = audioBuffer;
-            source.connect(audioContext.destination);
+            
+            // Add gain node for playback
+            const gainNode = audioContext.createGain();
+            gainNode.gain.value = 1.0;
+            
+            source.connect(gainNode);
+            gainNode.connect(audioContext.destination);
             source.onended = playFromQueue;
             source.start();
         }
 
-        window.onload = initAudio;
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            cleanupAudio();
+        });
     </script>
 </body>
 </html>

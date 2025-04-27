@@ -16,5 +16,7 @@ def handle_voice_data(data):
     emit('voice_data', data, broadcast=True, include_self=False)
 
 if __name__ == '__main__':
+    import eventlet
+    import eventlet.wsgi
     port = int(os.environ.get('PORT', 5000))
-    socketio.run(app, host='0.0.0.0', port=port)
+    socketio.run(app, host='0.0.0.0', port=port, server='eventlet')
